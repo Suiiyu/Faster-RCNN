@@ -23,7 +23,10 @@ import numpy as np
 import scipy.io as sio
 import caffe, os, sys, cv2
 import argparse
+import xml.etree.cElementTree as ET
 
+FP = 0# there is not an object but the net detectes one
+NC = 0# there is an object but the detection is wrong 
 CLASSES = ('__background__',  
             'leftAtrial')  
 
@@ -32,7 +35,6 @@ NETS = {'vgg16': ('VGG16',
         'zf': ('ZF',
                   'ZF_faster_rcnn_final.caffemodel')}
 
-rert
 def vis_detections(im, image_name, class_name, dets, thresh=0.5):
     """Draw detected bounding boxes."""
     inds = np.where(dets[:, -1] >= thresh)[0]
@@ -42,21 +44,35 @@ def vis_detections(im, image_name, class_name, dets, thresh=0.5):
     im = im[:, :, (2, 1, 0)]
     fig, ax = plt.subplots(figsize=(12, 12))
     ax.imshow(im, aspect='equal')
+    IoU_score = []
+    bbox = []
+    score = []
     for i in inds:
-        bbox = dets[i, :4]
-        score = dets[i, -1]
-
+        bbox.append(dets[i, :4])
+        score.append(dets[i, -1])
+	IoU_score.append(-1.0)
+        xml_path = find_xml(image_name, xml_find_path)		# find xml consistent with image_name by LYS
+    	if xml_path:		# if find, caculate the IoU score. else this is a false detection by LYS
+	    gt_box = get_gt_box(xml_path)
+	    IoU_score[i] = float(calcIoU(bbox[i], gt_box))
         ax.add_patch(
-            plt.Rectangle((bbox[0], bbox[1]),
-                          bbox[2] - bbox[0],
-                          bbox[3] - bbox[1], fill=False,
+            plt.Rectangle((bbox[i][0], bbox[i][1]),
+                          bbox[i][2] - bbox[i][0],
+                          bbox[i][3] - bbox[i][1], fill=False,
                           edgecolor='red', linewidth=3.5)
             )
-        ax.text(bbox[0], bbox[1] - 2,
-                '{:s} {:.3f}'.format(class_name, score),
+        ax.text(bbox[i][0], bbox[i][1] - 2,
+                '{:s} {:.3f} IoU:{:.3f}'.format(class_name, score[i], IoU_score[i]),
                 bbox=dict(facecolor='blue', alpha=0.5),
                 fontsize=14, color='white')
-
+    IoU = max(IoU_score)
+    max_rec_index = IoU_score.index(IoU)
+    ax.add_patch(
+	plt.Rectangle((bbox[max_rec_index][0], bbox[max_rec_index][1]),
+                      bbox[max_rec_index][2] - bbox[max_rec_index][0],
+                      bbox[max_rec_index][3] - bbox[max_rec_index][1], fill=False,
+                      edgecolor='yellow', linewidth=3.5)
+            )
     ax.set_title(('{} detections with '
                   'p({} | box) >= {:.1f} image_name:{}').format(class_name, class_name,
                                                   thresh, image_name),
@@ -113,6 +129,63 @@ def parse_args():
 
     return args
 
+def calcIoU(pre_box,gt_box):
+    global NC
+    calc_IoU = -1.0
+    pre_w = pre_box[2] - pre_box[0]
+    pre_h = pre_box[3] - pre_box[1]
+    pre_area = pre_w * pre_h
+    pre_core_x = pre_box[0] + pre_w/2.0
+    pre_core_y = pre_box[1] + pre_h/2.0
+    gt_w = gt_box[2] - gt_box[0]
+    gt_h = gt_box[3] - gt_box[1]
+    gt_area = gt_w * gt_h
+    gt_core_x = gt_box[0] + gt_w/2.0
+    gt_core_y = gt_box[1] + gt_h/2.0
+    if(abs(pre_core_x - gt_core_x) < ((pre_w + gt_w)/2.0)) and (abs(pre_core_y - gt_core_y) < ((pre_h + gt_h)/2.0)):
+	
+        coin_x_min = max(pre_box[0], gt_box[0])
+	coin_y_min = max(pre_box[1], gt_box[1])
+	coin_x_max = min(pre_box[2], gt_box[2])
+	coin_y_max = min(pre_box[3], gt_box[3])
+	coincide_box = [coin_x_min, coin_y_min, coin_x_max, coin_y_max]
+	#print coincide_box
+	coin_w = coincide_box[2] - coincide_box[0]
+	coin_h = coincide_box[3] - coincide_box[1]
+	coin_area = coin_w * coin_h
+        calc_IoU = coin_area/float(pre_area + gt_area - coin_area)
+	#print "IoU = ", calc_IoU
+    else: 
+	NC = NC + 1
+	print setColor.UseStyle("no coincide", fore = 'green')
+	
+    return calc_IoU
+
+def find_xml(image_name, xml_find_path):
+    global FP
+    xml_find_name = image_name.split('.')[0] + '.xml'
+    xml_list = os.listdir(xml_find_path)
+    xml_path = ''
+    if xml_find_name in xml_list:
+        xml_path = os.path.join(xml_find_path,xml_find_name)
+	#print xml_path
+    else: 
+	FP = FP + 1
+	print setColor.UseStyle("not find the xml",fore = 'blue')
+    return xml_path
+
+def get_gt_box(xml_path):
+    gt_box = np.zeros((4,1))
+    tree = ET.ElementTree(file= xml_path)
+    for elem in tree.iter(tag = 'xmin'):
+	gt_box[0] = int(elem.text)
+    for elem in tree.iter(tag = 'ymin'):
+	gt_box[1] = int(elem.text)
+    for elem in tree.iter(tag = 'xmax'):
+	gt_box[2] = int(elem.text)
+    for elem in tree.iter(tag = 'ymax'):
+	gt_box[3] = int(elem.text)
+    return gt_box
 
 if __name__ == '__main__':
     cfg.TEST.HAS_RPN = True  # Use RPN for proposals
@@ -151,5 +224,6 @@ if __name__ == '__main__':
         print 'Demo for data/demo/{}'.format(im_name)
         demo(net, im_name)
 
+    print 'FP = {}'.format(FP)
+    print 'NC = {}'.format(NC)
     plt.show()
-	
