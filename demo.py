@@ -39,7 +39,7 @@ def vis_detections(im, image_name, class_name, dets, thresh=0.5):
     """Draw detected bounding boxes."""
     inds = np.where(dets[:, -1] >= thresh)[0]
     if len(inds) == 0:
-        return
+        return False
 
     im = im[:, :, (2, 1, 0)]
     fig, ax = plt.subplots(figsize=(12, 12))
@@ -47,43 +47,42 @@ def vis_detections(im, image_name, class_name, dets, thresh=0.5):
     IoU_score = []
     bbox = []
     score = []
-    for i in inds:
-        bbox.append(dets[i, :4])
-        score.append(dets[i, -1])
-	IoU_score.append(-1.0)
-        xml_path = find_xml(image_name, xml_find_path)		# find xml consistent with image_name by LYS
-    	if xml_path:		# if find, caculate the IoU score. else this is a false detection by LYS
+    xml_path = find_xml(image_name, xml_find_path)		# find xml consistent with image_name by LYS
+    if xml_path:
+        for i in inds:
+            bbox.append(dets[i, :4])
+            score.append(dets[i, -1])
+	    IoU_score.append(-1.0)
 	    gt_box = get_gt_box(xml_path)
 	    IoU_score[i] = float(calcIoU(bbox[i], gt_box))
+        IoU = max(IoU_score)
+        max_rec_index = IoU_score.index(IoU)
         ax.add_patch(
-            plt.Rectangle((bbox[i][0], bbox[i][1]),
-                          bbox[i][2] - bbox[i][0],
-                          bbox[i][3] - bbox[i][1], fill=False,
-                          edgecolor='red', linewidth=3.5)
-            )
-        ax.text(bbox[i][0], bbox[i][1] - 2,
-                '{:s} {:.3f} IoU:{:.3f}'.format(class_name, score[i], IoU_score[i]),
+	    plt.Rectangle((bbox[max_rec_index][0], bbox[max_rec_index][1]),
+                          bbox[max_rec_index][2] - bbox[max_rec_index][0],
+                          bbox[max_rec_index][3] - bbox[max_rec_index][1], fill=False,
+                          edgecolor='yellow', linewidth=3.5)
+                )
+        ax.text(bbox[max_rec_index][0], bbox[max_rec_index][1] - 2,
+                '{:s} {:.3f} IoU:{:.3f}'.format(class_name, score[max_rec_index], IoU_score[max_rec_index]),
                 bbox=dict(facecolor='blue', alpha=0.5),
                 fontsize=14, color='white')
-    IoU = max(IoU_score)
-    max_rec_index = IoU_score.index(IoU)
-    ax.add_patch(
-	plt.Rectangle((bbox[max_rec_index][0], bbox[max_rec_index][1]),
-                      bbox[max_rec_index][2] - bbox[max_rec_index][0],
-                      bbox[max_rec_index][3] - bbox[max_rec_index][1], fill=False,
-                      edgecolor='yellow', linewidth=3.5)
-            )
-    ax.set_title(('{} detections with '
-                  'p({} | box) >= {:.1f} image_name:{}').format(class_name, class_name,
+        ax.set_title(('{} detections with '
+                      'p({} | box) >= {:.1f} image_name:{}').format(class_name, class_name,
                                                   thresh, image_name),
-                  fontsize=14)
-    plt.axis('off')
-    plt.tight_layout()
-    #save result
-    result_path = '/home/lys/lys/test/001grb_result/'
-    plt.savefig(os.path.join(result_path, image_name.split('.')[0] + '_result.jpg'))
-    plt.draw()
-
+                      fontsize=14)
+	
+        plt.axis('off')
+        plt.tight_layout()
+        #save result
+        result_path = '/home/lys/lys/test/001grb_result/'
+        plt.savefig(os.path.join(result_path, image_name.split('.')[0] + '_result.jpg'))
+        plt.draw()
+	res = [IoU, image_name, bbox[max_rec_index]]
+	return res
+    else:
+	return False
+   
 def demo(net, image_name):
     """Detect object classes in an image using pre-computed object proposals."""
     print image_name
@@ -112,8 +111,8 @@ def demo(net, image_name):
                           cls_scores[:, np.newaxis])).astype(np.float32)
         keep = nms(dets, NMS_THRESH)
         dets = dets[keep, :]
-        vis_detections(im, image_name, cls, dets, thresh=CONF_THRESH)
-
+        res = vis_detections(im, image_name, cls, dets, thresh=CONF_THRESH)
+    return res
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='Faster R-CNN demo')
@@ -169,10 +168,12 @@ def find_xml(image_name, xml_find_path):
     if xml_find_name in xml_list:
         xml_path = os.path.join(xml_find_path,xml_find_name)
 	#print xml_path
+	return xml_path
     else: 
 	FP = FP + 1
 	print setColor.UseStyle("not find the xml",fore = 'blue')
-    return xml_path
+	return False
+   
 
 def get_gt_box(xml_path):
     gt_box = np.zeros((4,1))
@@ -219,10 +220,13 @@ if __name__ == '__main__':
 ##load image by path LYS
     image_path = '/home/lys/lys/test/001grb/'
     im_names = os.listdir(image_path)  
+    res_list = []
     for im_name in im_names:
         print '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
         print 'Demo for data/demo/{}'.format(im_name)
-        demo(net, im_name)
+        res = demo(net, im_name)
+	if res:
+		res_list.append(res)
 
     print 'FP = {}'.format(FP)
     print 'NC = {}'.format(NC)
